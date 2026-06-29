@@ -1,0 +1,10 @@
+# Ignore executables and binary files
+*.exe
+a
+main
+myprogram
+test_app
+mytest
+
+# Ignore text logs or temporary document drafts
+New Text Document.txt

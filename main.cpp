@@ -2,7 +2,6 @@
 #include "stb_image.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-//#include "stb_image_write.h"
 
 #include <iostream>
 #include <vector>      
@@ -31,7 +30,7 @@ img loadImage(const string& path) {
     return image;
 }
 
-img resizeCenterCrop(img input, int target_dim) {
+img resizeFaceCrop(img input, int target_dim, int offsetX, int offsetY) {
     img output;
     output.w = target_dim;
     output.h = target_dim;
@@ -39,16 +38,17 @@ img resizeCenterCrop(img input, int target_dim) {
     output.data = new unsigned char[target_dim * target_dim];
 
     int minDim = std::min(input.w, input.h);
-    int startX = (input.w - minDim) / 2;
-    int startY = (input.h - minDim) / 2;
+    int cropSize = (int)(minDim * 0.55f); 
+    int startX = (input.w - cropSize) / 2 + offsetX;
+    int startY = (input.h - cropSize) / 4 + offsetY; 
 
     for (int y = 0; y < target_dim; y++) {
         for (int x = 0; x < target_dim; x++) {
-            int cropX = (x * minDim) / target_dim;
-            int cropY = (y * minDim) / target_dim;
+            int cropX = (x * cropSize) / target_dim;
+            int cropY = (y * cropSize) / target_dim;
             
-            int srcX = startX + cropX;
-            int srcY = startY + cropY;
+            int srcX = std::max(0, std::min(input.w - 1, startX + cropX));
+            int srcY = std::max(0, std::min(input.h - 1, startY + cropY));
             
             output.data[y * target_dim + x] = input.data[srcY * input.w + srcX];
         }
@@ -117,7 +117,7 @@ vector<float> doHOG(img input) {
         }
     }
     
-    int cellSize = 8;
+    int cellSize = 16; 
     int numBins = 9;
     int cellsX = width / cellSize;
     int cellsY = height / cellSize;
@@ -175,71 +175,87 @@ vector<float> doHOG(img input) {
 }
 
 int main(int argc, char* argv[]) {
-    cout << "=== KYC Biometric Verification Engine ===" << endl;
-
     if (argc < 3) {
-        cout << "\nError: Missing file arguments." << endl;
-        cout << "Usage: ./test_app <selfie_image> <passport_image>" << endl;
         return 1;
     }
 
     string selfieFile = argv[1];
     string idFile = argv[2];
 
-    cout << "Loading: " << selfieFile << " and " << idFile << "..." << endl;
-
     img rawSelfie = loadImage(selfieFile);
     img rawId = loadImage(idFile);
 
     if (rawSelfie.w == 0 || rawId.w == 0) {
-        cout << "Error: Execution halted. Verification assets missing or corrupt." << endl;
         if(rawSelfie.data) stbi_image_free(rawSelfie.data);
         if(rawId.data) stbi_image_free(rawId.data);
         return 1;
     }
 
-    img selfieResized = resizeCenterCrop(rawSelfie, 256);
-    img idDocResized = resizeCenterCrop(rawId, 256);
-
-    img selfie = normalizeImage(selfieResized);
+    img idDocResized = resizeFaceCrop(rawId, 256, 0, 0);
     img idDoc = normalizeImage(idDocResized);
-
-    float mse = getMSE(selfie, idDoc);
-    cout << "MSE: " << mse << endl;
-
-    cout << "Doing HOG extraction..." << endl;
-    vector<float> hog1 = doHOG(selfie);
     vector<float> hog2 = doHOG(idDoc);
 
-    float diffSum = 0;
-    int size = std::min(hog1.size(), hog2.size());
-    
-    for (int i = 0; i < size; i++) {
-        float d = hog1[i] - hog2[i];
-        diffSum += (d * d);
+    float bestMatchPercentage = 0.0f;
+    float bestHogScore = 0.0f;
+    float bestMseScore = 0.0f;
+
+    int searchStep = rawSelfie.w / 20; 
+    if (searchStep == 0) searchStep = 10;
+    int maxOffset = searchStep * 2;
+
+    for (int dy = -maxOffset; dy <= maxOffset; dy += searchStep) {
+        for (int dx = -maxOffset; dx <= maxOffset; dx += searchStep) {
+            
+            img selfieResized = resizeFaceCrop(rawSelfie, 256, dx, dy);
+            img selfie = normalizeImage(selfieResized);
+
+            float mse = getMSE(selfie, idDoc);
+            vector<float> hog1 = doHOG(selfie);
+
+            float dotProduct = 0.0f;
+            float norm1 = 0.0f;
+            float norm2 = 0.0f;
+            int size = std::min(hog1.size(), hog2.size());
+            
+            for (int i = 0; i < size; i++) {
+                dotProduct += (hog1[i] * hog2[i]);
+                norm1 += (hog1[i] * hog1[i]);
+                norm2 += (hog2[i] * hog2[i]);
+            }
+
+            float cosineSimilarity = dotProduct / (sqrt(norm1) * sqrt(norm2) + 1e-7f);
+
+            float maxMseBoundary = 45000.0f; 
+            float mseScore = std::max(0.0f, (1.0f - (mse / maxMseBoundary))) * 100.0f;
+            float hogScore = std::max(0.0f, cosineSimilarity) * 100.0f;
+            
+            float matchPercentage = (mseScore * 0.15f) + (hogScore * 0.85f);
+
+            if (matchPercentage > bestMatchPercentage) {
+                bestMatchPercentage = matchPercentage;
+                bestHogScore = hogScore;
+                bestMseScore = mseScore;
+            }
+
+            delete[] selfieResized.data;
+            delete[] selfie.data;
+        }
     }
+
+    cout << "\n=== KYC VERIFICATION REPORT ===" << endl;
+    cout << "Best Alignment Component 1 (MSE): " << bestMseScore << "% Match" << endl;
+    cout << "Best Alignment Component 2 (HOG): " << bestHogScore << "% Match" << endl;
+    cout << "-------------------------------" << endl;
+    cout << "Final Confidence : " << bestMatchPercentage << "%" << endl;
     
-    float hogDist = sqrt(diffSum);
-    cout << "HOG Distance: " << hogDist << endl;
+    if (bestMatchPercentage >= 75.0f) {
+        cout << "DECISION         : [ APPROVED - MATCH FOUND ]" << endl;
+    } else {
+        cout << "DECISION         : [ REJECTED - NO MATCH ]" << endl;
+    }
+    cout << "===============================\n" << endl;
 
-    float maxMseBoundary = 20000.0f;
-    float maxHogBoundary = 60.0f;
-
-    float mseScore = (1.0f - (mse / maxMseBoundary)) * 100.0f;
-    float hogScore = (1.0f - (hogDist / maxHogBoundary)) * 100.0f;
-
-    if (mseScore < 0.0f) mseScore = 0.0f;
-    if (hogScore < 0.0f) hogScore = 0.0f;
-
-    float matchPercentage = (mseScore * 0.1f) + (hogScore * 0.9f);
-
-    cout << "---------------------------------------" << endl;
-    cout << "Biometric Match Confidence: " << matchPercentage << "%" << endl;
-    cout << "---------------------------------------" << endl;
-
-    delete[] selfieResized.data;
     delete[] idDocResized.data;
-    delete[] selfie.data;
     delete[] idDoc.data;
 
     if(rawSelfie.data) stbi_image_free(rawSelfie.data);

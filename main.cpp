@@ -242,18 +242,18 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    cout << "\n=== KYC VERIFICATION REPORT ===" << endl;
+    cout << "\nKYC VERIFICATION REPORT : " << endl;
     cout << "Best Alignment Component 1 (MSE): " << bestMseScore << "% Match" << endl;
     cout << "Best Alignment Component 2 (HOG): " << bestHogScore << "% Match" << endl;
     cout << "-------------------------------" << endl;
     cout << "Final Confidence : " << bestMatchPercentage << "%" << endl;
     
     if (bestMatchPercentage >= 75.0f) {
-        cout << "DECISION         : [ APPROVED - MATCH FOUND ]" << endl;
+        cout << "DECISION  : APPROVED - MATCH FOUND " << endl;
     } else {
-        cout << "DECISION         : [ REJECTED - NO MATCH ]" << endl;
+        cout << "DECISION  : REJECTED - NO MATCH " << endl;
     }
-    cout << "===============================\n" << endl;
+    cout << "-----------\n" << endl;
 
     delete[] idDocResized.data;
     delete[] idDoc.data;
